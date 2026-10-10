@@ -1,0 +1,6 @@
+{
+  "name": "Project R - English Study Tracker",
+  "description": "Rastreamento inteligente de estudos de inglês, nível CEFR, vocabulário e consistência pedagógica com sincronização em tempo real no Firebase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

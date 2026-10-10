@@ -1,0 +1,184 @@
+{
+  "entities": {
+    "activity": {
+      "title": "Activity",
+      "description": "A recorded English study session with skill type and duration.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique activity ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "User identifier who owns the study session"
+        },
+        "skill": {
+          "type": "string",
+          "description": "Language skill practiced",
+          "enum": ["listening", "speaking", "writing", "reading", "grammar"]
+        },
+        "activityType": {
+          "type": "string",
+          "description": "Subcategory or resource type used"
+        },
+        "durationMinutes": {
+          "type": "number",
+          "description": "Duration in minutes"
+        },
+        "date": {
+          "type": "string",
+          "description": "Date of study session in YYYY-MM-DD format"
+        },
+        "time": {
+          "type": "string",
+          "description": "Time of study session (HH:mm)"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title or summary of material practiced",
+          "maxLength": 200
+        },
+        "url": {
+          "type": "string",
+          "description": "Optional web or resource link",
+          "maxLength": 500
+        },
+        "notes": {
+          "type": "string",
+          "description": "Personal study notes or vocabulary discovered",
+          "maxLength": 2000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        }
+      },
+      "required": ["userId", "skill", "activityType", "durationMinutes", "date", "title"]
+    },
+    "vocabulary": {
+      "title": "Vocabulary",
+      "description": "A saved word, expression, or phrasal verb with definition, pronunciation and study status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique vocabulary ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "User identifier who saved the word"
+        },
+        "word": {
+          "type": "string",
+          "description": "English word or expression",
+          "maxLength": 100
+        },
+        "phonetic": {
+          "type": "string",
+          "description": "IPA phonetic transcription",
+          "maxLength": 50
+        },
+        "category": {
+          "type": "string",
+          "description": "Grammatical class like Conjunction, Noun, Phrasal Verb, etc.",
+          "maxLength": 50
+        },
+        "translation": {
+          "type": "string",
+          "description": "Portuguese meaning / translation",
+          "maxLength": 200
+        },
+        "exampleEn": {
+          "type": "string",
+          "description": "Example sentence in English",
+          "maxLength": 300
+        },
+        "examplePt": {
+          "type": "string",
+          "description": "Example translation in Portuguese",
+          "maxLength": 300
+        },
+        "contextSource": {
+          "type": "string",
+          "description": "Source where word was encountered",
+          "maxLength": 100
+        },
+        "status": {
+          "type": "string",
+          "description": "Mastery status",
+          "enum": ["review", "learning", "learned"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["userId", "word", "translation", "status"]
+    },
+    "userProfile": {
+      "title": "UserProfile",
+      "description": "Student CEFR journey progress, goals, and streak metrics.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User ID"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Student display name",
+          "maxLength": 100
+        },
+        "currentLevel": {
+          "type": "string",
+          "description": "Current CEFR level like A1, A2, B1",
+          "maxLength": 10
+        },
+        "targetLevel": {
+          "type": "string",
+          "description": "Target CEFR level like A2",
+          "maxLength": 10
+        },
+        "targetHours": {
+          "type": "number",
+          "description": "Target recommended hours for level progression"
+        },
+        "weeklyGoalHours": {
+          "type": "number",
+          "description": "Target hours per week"
+        },
+        "avatarUrl": {
+          "type": "string",
+          "description": "Profile picture URL",
+          "maxLength": 500
+        }
+      },
+      "required": ["userId", "displayName", "currentLevel", "targetLevel"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/activities/{activityId}": {
+      "schema": {
+        "$ref": "activity"
+      },
+      "description": "Study session records scoped by authenticated user."
+    },
+    "/users/{userId}/vocabulary/{vocabId}": {
+      "schema": {
+        "$ref": "vocabulary"
+      },
+      "description": "Vocabulary notebook items scoped by authenticated user."
+    },
+    "/users/{userId}/profile/info": {
+      "schema": {
+        "$ref": "userProfile"
+      },
+      "description": "User learning profile and settings."
+    }
+  }
+}
