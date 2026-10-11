@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export enum OperationType {
@@ -54,8 +54,13 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 // Initialize App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore with custom databaseId per blueprint instructions
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Initialize Firestore with ignoreUndefinedProperties enabled and target databaseId
+export const db = initializeFirestore(
+  app,
+  { ignoreUndefinedProperties: true },
+  firebaseConfig.firestoreDatabaseId
+);
+
 export const auth = getAuth(app);
 
 // Test connection on app startup

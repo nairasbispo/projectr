@@ -21,8 +21,10 @@ export const RegisterStudyModal: React.FC = () => {
   const [url, setUrl] = useState('');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    setErrorMessage(null);
     if (selectedActivityForEdit) {
       setSelectedSkill(selectedActivityForEdit.skill);
       setSelectedActivityType(selectedActivityForEdit.activityType);
@@ -54,6 +56,7 @@ export const RegisterStudyModal: React.FC = () => {
 
   const handleSave = async () => {
     setIsSubmitting(true);
+    setErrorMessage(null);
     const finalTitle = title.trim() || `${selectedSkill.toUpperCase()} - ${selectedActivityType}`;
     const now = new Date();
     const time = `${now.getHours() < 10 ? '0' : ''}${now.getHours()}:${now.getMinutes() < 10 ? '0' : ''}${now.getMinutes()}`;
@@ -66,10 +69,10 @@ export const RegisterStudyModal: React.FC = () => {
           durationMinutes,
           date: dateStr,
           title: finalTitle,
-          url: url.trim() || undefined,
-          notes: notes.trim() || undefined,
+          url: url.trim() || '',
+          notes: notes.trim() || '',
         });
-        setFeedbackMessage('Sessão atualizada com sucesso no Firebase!');
+        setFeedbackMessage('Sessão atualizada com sucesso no Firestore!');
       } else {
         await addActivity({
           skill: selectedSkill,
@@ -78,16 +81,21 @@ export const RegisterStudyModal: React.FC = () => {
           date: dateStr,
           time,
           title: finalTitle,
-          url: url.trim() || undefined,
-          notes: notes.trim() || undefined,
+          url: url.trim() || '',
+          notes: notes.trim() || '',
         });
-        setFeedbackMessage(`+${durationMinutes} min em ${selectedSkill.toUpperCase()} salvos no Firebase!`);
+        setFeedbackMessage(`+${durationMinutes} min em ${selectedSkill.toUpperCase()} salvos no Firestore!`);
       }
 
       setIsRegisterModalOpen(false);
       setSelectedActivityForEdit(null);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error saving study session:', e);
+      setErrorMessage(
+        e?.message?.includes('permission')
+          ? 'Erro de permissão no Firebase. As regras foram atualizadas, tente novamente.'
+          : 'Não foi possível gravar a sessão no banco de dados. Tente novamente.'
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -144,6 +152,23 @@ export const RegisterStudyModal: React.FC = () => {
             Os minutos inseridos atualizam automaticamente seus gráficos e métricas de fluência.
           </p>
         </div>
+
+        {/* Error notification if save failed */}
+        {errorMessage && (
+          <div className="bg-red-500/20 border border-red-500/40 text-red-200 text-xs p-3 rounded-xl flex items-center justify-between gap-2 animate-shake">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-red-400 text-[18px]">error</span>
+              <span>{errorMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              className="text-red-400 hover:text-white"
+            >
+              <span className="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          </div>
+        )}
 
         {/* Step 1: Selecione a Habilidade */}
         <section className="bg-[#111726] border border-[#1e293b] rounded-2xl p-4 shadow-xl space-y-3">

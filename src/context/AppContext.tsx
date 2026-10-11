@@ -103,10 +103,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [dbStatus, setDbStatus] = useState<'connected' | 'saving' | 'error'>('connected');
-  const [activities, setActivities] = useState<Activity[]>(initialActivities);
-  const [vocabulary, setVocabulary] = useState<VocabularyWord[]>(initialVocabulary);
-  const [grammar, setGrammar] = useState<GrammarItem[]>(initialGrammar);
-  const [profile, setProfile] = useState<UserProfile>(defaultProfile);
+
+  const [activities, setActivities] = useState<Activity[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('project_r_activities');
+        if (cached) return JSON.parse(cached);
+      } catch (e) {
+        console.warn('Failed to parse cached activities', e);
+      }
+    }
+    return initialActivities;
+  });
+
+  const [vocabulary, setVocabulary] = useState<VocabularyWord[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('project_r_vocabulary');
+        if (cached) return JSON.parse(cached);
+      } catch (e) {
+        console.warn('Failed to parse cached vocabulary', e);
+      }
+    }
+    return initialVocabulary;
+  });
+
+  const [grammar, setGrammar] = useState<GrammarItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('project_r_grammar');
+        if (cached) return JSON.parse(cached);
+      } catch (e) {
+        console.warn('Failed to parse cached grammar', e);
+      }
+    }
+    return initialGrammar;
+  });
+
+  const [profile, setProfile] = useState<UserProfile>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('project_r_profile');
+        if (cached) return JSON.parse(cached);
+      } catch (e) {
+        console.warn('Failed to parse cached profile', e);
+      }
+    }
+    return defaultProfile;
+  });
+
   const [activeSection, setActiveSection] = useState<NavigationSection>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
@@ -153,13 +198,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 1. Activities collection listener
     const activitiesRef = collection(db, 'users', userId, 'activities');
-    const qActivities = query(activitiesRef, orderBy('createdAt', 'desc'));
 
     const unsubActivities = onSnapshot(
-      qActivities,
+      activitiesRef,
       (snapshot) => {
         const acts = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Activity, 'id'>) }));
+        // Clean sort by date and createdAt
+        acts.sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
         setActivities(acts);
+        try { localStorage.setItem('project_r_activities', JSON.stringify(acts)); } catch (e) {}
         setIsSyncing(false);
         setDbStatus('connected');
       },
@@ -177,6 +224,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (snapshot) => {
         const vocabs = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<VocabularyWord, 'id'>) }));
         setVocabulary(vocabs);
+        try { localStorage.setItem('project_r_vocabulary', JSON.stringify(vocabs)); } catch (e) {}
         setDbStatus('connected');
       },
       (err) => {
@@ -191,6 +239,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (snapshot) => {
         const items = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<GrammarItem, 'id'>) }));
         setGrammar(items);
+        try { localStorage.setItem('project_r_grammar', JSON.stringify(items)); } catch (e) {}
         setDbStatus('connected');
       },
       (err) => {
@@ -204,7 +253,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       profileDocRef,
       (snapshot) => {
         if (snapshot.exists()) {
-          setProfile(snapshot.data() as UserProfile);
+          const profileData = snapshot.data() as UserProfile;
+          setProfile(profileData);
+          try { localStorage.setItem('project_r_profile', JSON.stringify(profileData)); } catch (e) {}
         }
       },
       (err) => {
@@ -224,15 +275,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addActivity = useCallback(
     async (actData: Omit<Activity, 'id' | 'userId' | 'createdAt'>) => {
       const newId = `act-${Date.now()}`;
+      const nowIso = new Date().toISOString();
       const newActivity: Activity = {
-        ...actData,
         id: newId,
         userId,
-        createdAt: new Date().toISOString(),
+        skill: actData.skill,
+        activityType: actData.activityType,
+        durationMinutes: Number(actData.durationMinutes) || 1,
+        date: actData.date || nowIso.slice(0, 10),
+        time: actData.time || `${new Date().getHours().toString().padStart(2, '0')}:${new Date().getMinutes().toString().padStart(2, '0')}`,
+        title: actData.title,
+        url: actData.url || '',
+        notes: actData.notes || '',
+        createdAt: nowIso,
       };
 
-      // Optimistic update
-      setActivities((prev) => [newActivity, ...prev]);
+      // Optimistic state and local storage update
+      setActivities((prev) => {
+        const next = [newActivity, ...prev.filter((a) => a.id !== newId)];
+        try { localStorage.setItem('project_r_activities', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
 
       try {
         setIsSyncing(true);
@@ -253,12 +316,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateActivity = useCallback(
     async (id: string, updates: Partial<Activity>) => {
-      setActivities((prev) => prev.map((a) => (a.id === id ? { ...a, ...updates } : a)));
+      const cleanUpdates: Record<string, any> = {};
+      Object.entries(updates).forEach(([k, v]) => {
+        if (v !== undefined) cleanUpdates[k] = v;
+      });
+
+      setActivities((prev) => {
+        const next = prev.map((a) => (a.id === id ? { ...a, ...cleanUpdates } : a));
+        try { localStorage.setItem('project_r_activities', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
 
       try {
         setIsSyncing(true);
         setDbStatus('saving');
-        await updateDoc(doc(db, 'users', userId, 'activities', id), updates);
+        await updateDoc(doc(db, 'users', userId, 'activities', id), cleanUpdates);
         setDbStatus('connected');
         setFeedbackMessage('Sessão atualizada no Firestore!');
       } catch (err) {
@@ -274,7 +346,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteActivity = useCallback(
     async (id: string) => {
-      setActivities((prev) => prev.filter((a) => a.id !== id));
+      setActivities((prev) => {
+        const next = prev.filter((a) => a.id !== id);
+        try { localStorage.setItem('project_r_activities', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
 
       try {
         setIsSyncing(true);
@@ -296,14 +372,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addVocabulary = useCallback(
     async (vocabData: Omit<VocabularyWord, 'id' | 'userId' | 'createdAt'>) => {
       const newId = `vocab-${Date.now()}`;
+      const nowIso = new Date().toISOString();
       const newVocab: VocabularyWord = {
-        ...vocabData,
         id: newId,
         userId,
-        createdAt: new Date().toISOString(),
+        word: vocabData.word,
+        phonetic: vocabData.phonetic || '',
+        category: vocabData.category || '',
+        translation: vocabData.translation,
+        exampleEn: vocabData.exampleEn || '',
+        examplePt: vocabData.examplePt || '',
+        contextSource: vocabData.contextSource || '',
+        status: vocabData.status || 'review',
+        createdAt: nowIso,
       };
 
-      setVocabulary((prev) => [newVocab, ...prev]);
+      setVocabulary((prev) => {
+        const next = [newVocab, ...prev.filter((v) => v.id !== newId)];
+        try { localStorage.setItem('project_r_vocabulary', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
 
       try {
         setIsSyncing(true);
@@ -325,12 +413,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateVocabulary = useCallback(
     async (id: string, updates: Partial<VocabularyWord>) => {
       const updatedAt = new Date().toISOString();
-      setVocabulary((prev) => prev.map((v) => (v.id === id ? { ...v, ...updates, updatedAt } : v)));
+      const cleanUpdates: Record<string, any> = { updatedAt };
+      Object.entries(updates).forEach(([k, v]) => {
+        if (v !== undefined) cleanUpdates[k] = v;
+      });
+
+      setVocabulary((prev) => {
+        const next = prev.map((v) => (v.id === id ? { ...v, ...cleanUpdates } : v));
+        try { localStorage.setItem('project_r_vocabulary', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
 
       try {
         setIsSyncing(true);
         setDbStatus('saving');
-        await updateDoc(doc(db, 'users', userId, 'vocabulary', id), { ...updates, updatedAt });
+        await updateDoc(doc(db, 'users', userId, 'vocabulary', id), cleanUpdates);
         setDbStatus('connected');
       } catch (err) {
         setDbStatus('error');
@@ -380,7 +477,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createdAt: new Date().toISOString(),
       };
 
-      setGrammar((prev) => [newItem, ...prev]);
+      setGrammar((prev) => {
+        const next = [newItem, ...prev.filter(g => g.id !== newId)];
+        try { localStorage.setItem('project_r_grammar', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
 
       try {
         setIsSyncing(true);
@@ -401,12 +502,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateGrammarItem = useCallback(
     async (id: string, updates: Partial<GrammarItem>) => {
-      setGrammar((prev) => prev.map((g) => (g.id === id ? { ...g, ...updates } : g)));
+      const cleanUpdates: Record<string, any> = {};
+      Object.entries(updates).forEach(([k, v]) => {
+        if (v !== undefined) cleanUpdates[k] = v;
+      });
+
+      setGrammar((prev) => {
+        const next = prev.map((g) => (g.id === id ? { ...g, ...cleanUpdates } : g));
+        try { localStorage.setItem('project_r_grammar', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
 
       try {
         setIsSyncing(true);
         setDbStatus('saving');
-        await updateDoc(doc(db, 'users', userId, 'grammar', id), updates);
+        await updateDoc(doc(db, 'users', userId, 'grammar', id), cleanUpdates);
         setDbStatus('connected');
       } catch (err) {
         setDbStatus('error');
@@ -421,7 +531,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteGrammarItem = useCallback(
     async (id: string) => {
-      setGrammar((prev) => prev.filter((g) => g.id !== id));
+      setGrammar((prev) => {
+        const next = prev.filter((g) => g.id !== id);
+        try { localStorage.setItem('project_r_grammar', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
 
       try {
         setIsSyncing(true);
@@ -441,12 +555,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateProfile = useCallback(
     async (updates: Partial<UserProfile>) => {
-      setProfile((prev) => ({ ...prev, ...updates }));
+      const cleanUpdates: Record<string, any> = {};
+      Object.entries(updates).forEach(([k, v]) => {
+        if (v !== undefined) cleanUpdates[k] = v;
+      });
+
+      setProfile((prev) => {
+        const next = { ...prev, ...cleanUpdates };
+        try { localStorage.setItem('project_r_profile', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
 
       try {
         setIsSyncing(true);
         setDbStatus('saving');
-        await setDoc(doc(db, 'users', userId, 'profile', 'info'), updates, { merge: true });
+        await setDoc(doc(db, 'users', userId, 'profile', 'info'), cleanUpdates, { merge: true });
         setDbStatus('connected');
       } catch (err) {
         setDbStatus('error');
@@ -490,6 +613,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActivities([]);
     setVocabulary([]);
     setGrammar([]);
+    try {
+      localStorage.removeItem('project_r_activities');
+      localStorage.removeItem('project_r_vocabulary');
+      localStorage.removeItem('project_r_grammar');
+    } catch (e) {}
 
     try {
       setIsSyncing(true);

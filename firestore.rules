@@ -10,26 +10,21 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    // Default deny for anything outside /users and /test
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // User workspaces and data
     match /users/{userId} {
       allow read, write: if isOwner(userId) || request.auth == null;
 
-      match /profile/{docId} {
-        allow read, write: if isOwner(userId) || request.auth == null;
-      }
-
-      match /activities/{activityId} {
-        allow read, write: if isOwner(userId) || request.auth == null;
-      }
-
-      match /vocabulary/{vocabId} {
-        allow read, write: if isOwner(userId) || request.auth == null;
-      }
-
-      match /grammar/{grammarId} {
+      match /{allChildren=**} {
         allow read, write: if isOwner(userId) || request.auth == null;
       }
     }
 
+    // Connection test document
     match /test/{docId} {
       allow read, write: if true;
     }
