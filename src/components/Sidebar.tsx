@@ -187,36 +187,39 @@ export const Sidebar: React.FC = () => {
         </div>
 
         {/* Footer info & Zero App control */}
-        <div className="p-4 border-t border-[#1e293b] bg-[#0c1220] flex flex-col gap-2.5">
+        <div className="p-4 border-t border-[#1e2a42] bg-[#090d16] flex flex-col gap-2.5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {/* Minimalist vector avatar (No photo!) */}
-              <div className="w-8 h-8 rounded-full bg-[#182236] border border-[#38bdf8]/30 flex items-center justify-center text-[#38bdf8] font-bold text-xs">
-                {profile.displayName?.slice(0, 1).toUpperCase() || 'E'}
+            <div className="flex items-center gap-2.5">
+              {/* Minimalist vector avatar for Reinan */}
+              <div className="w-8 h-8 rounded-full bg-[#141c2e] border border-[#38bdf8]/40 flex items-center justify-center text-[#38bdf8] font-bold text-xs shadow-xs">
+                {profile.displayName?.slice(0, 1).toUpperCase() || 'R'}
               </div>
               <div className="flex flex-col">
-                <span className="text-xs font-medium text-[#f1f5f9]">{profile.displayName}</span>
-                <span className="text-[10px] text-[#64748b]">
-                  {isSyncing ? 'Sincronizando...' : 'Firebase Conectado'}
+                <span className="text-xs font-semibold text-[#f8fafc]">{profile.displayName || 'Reinan'}</span>
+                <span className="text-[10px] text-[#34d399] flex items-center gap-1 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
+                  {isSyncing ? 'Gravando no Firestore...' : 'Firestore Conectado'}
                 </span>
               </div>
             </div>
 
-            <div className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse" title="Online" />
+            <span className="text-[10px] text-[#64748b] bg-[#131b2e] px-2 py-0.5 rounded-md border border-[#1e2a42]">
+              Real-time
+            </span>
           </div>
 
           {/* Zero App Button */}
           <button
             onClick={() => {
-              if (confirm('Deseja zerar todos os dados do aplicativo para começar limpo?')) {
+              if (confirm('Deseja zerar todos os dados do banco de dados para começar limpo?')) {
                 clearAllData();
                 setIsSidebarOpen(false);
               }
             }}
-            className="w-full text-center py-2 px-3 rounded-lg text-[11px] text-[#f87171] hover:bg-[#f87171]/10 border border-[#f87171]/20 font-medium transition-colors flex items-center justify-center gap-1.5"
+            className="w-full text-center py-2 px-3 rounded-xl text-[11px] text-[#f87171] hover:bg-[#f87171]/10 border border-[#f87171]/25 font-semibold transition-colors flex items-center justify-center gap-1.5"
           >
             <span className="material-symbols-outlined text-[15px]">delete_sweep</span>
-            <span>Zerar todos os dados do app</span>
+            <span>Limpar / Zerar Banco de Dados</span>
           </button>
         </div>
       </aside>

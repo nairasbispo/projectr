@@ -10,7 +10,7 @@ import {
   orderBy,
   getDocs,
 } from 'firebase/firestore';
-import { onAuthStateChanged, signInAnonymously, User } from 'firebase/auth';
+import { onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut, User } from 'firebase/auth';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase/config';
 import {
   Activity,
@@ -37,6 +37,7 @@ interface AppContextType {
   userId: string;
   isAuthReady: boolean;
   isSyncing: boolean;
+  dbStatus: 'connected' | 'saving' | 'error';
   activities: Activity[];
   vocabulary: VocabularyWord[];
   grammar: GrammarItem[];
@@ -79,6 +80,8 @@ interface AppContextType {
   updateGoals: (goals: UserGoals) => Promise<void>;
   clearAllData: () => Promise<void>;
   loadSampleData: () => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
+  signOutUser: () => Promise<void>;
   speakWord: (text: string) => void;
 
   // Computed metrics
@@ -99,6 +102,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [dbStatus, setDbStatus] = useState<'connected' | 'saving' | 'error'>('connected');
   const [activities, setActivities] = useState<Activity[]>(initialActivities);
   const [vocabulary, setVocabulary] = useState<VocabularyWord[]>(initialVocabulary);
   const [grammar, setGrammar] = useState<GrammarItem[]>(initialGrammar);
@@ -113,34 +117,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAddGrammarModalOpen, setIsAddGrammarModalOpen] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
-  // Authenticate user
+  // Determine active userId
+  const [activeUserId, setActiveUserId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('project_r_user_id');
+      if (saved) return saved;
+      localStorage.setItem('project_r_user_id', 'reinan');
+      return 'reinan';
+    }
+    return 'reinan';
+  });
+
+  // Track Firebase Auth state
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        setIsAuthReady(true);
-      } else {
-        try {
-          const cred = await signInAnonymously(auth);
-          setUser(cred.user);
-        } catch (e) {
-          console.warn('Anonymous auth failed, falling back to local user:', e);
-        } finally {
-          setIsAuthReady(true);
-        }
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAuthReady(true);
+      if (currentUser?.uid) {
+        setActiveUserId(currentUser.uid);
+        localStorage.setItem('project_r_user_id', currentUser.uid);
       }
     });
 
     return () => unsubscribe();
   }, []);
 
-  const userId = user?.uid || 'user_active';
+  const userId = user?.uid || activeUserId;
 
-  // Real-time Firestore sync
+  // Real-time Firestore sync listeners
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!userId) return;
 
     setIsSyncing(true);
+    setDbStatus('saving');
+
+    // 1. Activities collection listener
     const activitiesRef = collection(db, 'users', userId, 'activities');
     const qActivities = query(activitiesRef, orderBy('createdAt', 'desc'));
 
@@ -150,69 +161,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const acts = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Activity, 'id'>) }));
         setActivities(acts);
         setIsSyncing(false);
+        setDbStatus('connected');
       },
       (err) => {
         setIsSyncing(false);
-        try {
-          handleFirestoreError(err, OperationType.LIST, `users/${userId}/activities`);
-        } catch (e) {
-          console.warn('Firestore fallback on activities:', e);
-        }
+        setDbStatus('error');
+        console.error('Firestore activities sync error:', err);
       }
     );
 
+    // 2. Vocabulary collection listener
     const vocabRef = collection(db, 'users', userId, 'vocabulary');
     const unsubVocab = onSnapshot(
       vocabRef,
       (snapshot) => {
         const vocabs = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<VocabularyWord, 'id'>) }));
         setVocabulary(vocabs);
+        setDbStatus('connected');
       },
       (err) => {
-        try {
-          handleFirestoreError(err, OperationType.LIST, `users/${userId}/vocabulary`);
-        } catch (e) {
-          console.warn('Firestore fallback on vocabulary:', e);
-        }
+        console.error('Firestore vocabulary sync error:', err);
       }
     );
 
+    // 3. Grammar collection listener
     const grammarRef = collection(db, 'users', userId, 'grammar');
     const unsubGrammar = onSnapshot(
       grammarRef,
       (snapshot) => {
         const items = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<GrammarItem, 'id'>) }));
         setGrammar(items);
+        setDbStatus('connected');
       },
       (err) => {
-        try {
-          handleFirestoreError(err, OperationType.LIST, `users/${userId}/grammar`);
-        } catch (e) {
-          console.warn('Firestore fallback on grammar:', e);
-        }
+        console.error('Firestore grammar sync error:', err);
       }
     );
 
+    // 4. User profile listener
     const profileDocRef = doc(db, 'users', userId, 'profile', 'info');
     const unsubProfile = onSnapshot(
       profileDocRef,
-      async (snapshot) => {
+      (snapshot) => {
         if (snapshot.exists()) {
           setProfile(snapshot.data() as UserProfile);
-        } else {
-          try {
-            await setDoc(profileDocRef, { ...defaultProfile, userId });
-          } catch (err) {
-            console.error('Error saving profile:', err);
-          }
         }
       },
       (err) => {
-        try {
-          handleFirestoreError(err, OperationType.GET, `users/${userId}/profile/info`);
-        } catch (e) {
-          console.warn('Firestore fallback on profile:', e);
-        }
+        console.error('Firestore profile sync error:', err);
       }
     );
 
@@ -222,9 +218,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubGrammar();
       unsubProfile();
     };
-  }, [isAuthReady, user, userId]);
+  }, [userId]);
 
-  // Actions
+  // Actions that ALWAYS execute against Firestore
   const addActivity = useCallback(
     async (actData: Omit<Activity, 'id' | 'userId' | 'createdAt'>) => {
       const newId = `act-${Date.now()}`;
@@ -235,47 +231,66 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createdAt: new Date().toISOString(),
       };
 
+      // Optimistic update
       setActivities((prev) => [newActivity, ...prev]);
 
-      if (user) {
-        try {
-          await setDoc(doc(db, 'users', userId, 'activities', newId), newActivity);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `users/${userId}/activities/${newId}`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await setDoc(doc(db, 'users', userId, 'activities', newId), newActivity);
+        setDbStatus('connected');
+        setFeedbackMessage('Sessão gravada no Firestore com sucesso!');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error saving activity to Firestore:', err);
+        handleFirestoreError(err, OperationType.CREATE, `users/${userId}/activities/${newId}`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const updateActivity = useCallback(
     async (id: string, updates: Partial<Activity>) => {
       setActivities((prev) => prev.map((a) => (a.id === id ? { ...a, ...updates } : a)));
 
-      if (user) {
-        try {
-          await updateDoc(doc(db, 'users', userId, 'activities', id), updates);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `users/${userId}/activities/${id}`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await updateDoc(doc(db, 'users', userId, 'activities', id), updates);
+        setDbStatus('connected');
+        setFeedbackMessage('Sessão atualizada no Firestore!');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error updating activity in Firestore:', err);
+        handleFirestoreError(err, OperationType.UPDATE, `users/${userId}/activities/${id}`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const deleteActivity = useCallback(
     async (id: string) => {
       setActivities((prev) => prev.filter((a) => a.id !== id));
 
-      if (user) {
-        try {
-          await deleteDoc(doc(db, 'users', userId, 'activities', id));
-        } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `users/${userId}/activities/${id}`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await deleteDoc(doc(db, 'users', userId, 'activities', id));
+        setDbStatus('connected');
+        setFeedbackMessage('Sessão removida do Firestore!');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error deleting activity in Firestore:', err);
+        handleFirestoreError(err, OperationType.DELETE, `users/${userId}/activities/${id}`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const addVocabulary = useCallback(
@@ -290,15 +305,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setVocabulary((prev) => [newVocab, ...prev]);
 
-      if (user) {
-        try {
-          await setDoc(doc(db, 'users', userId, 'vocabulary', newId), newVocab);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `users/${userId}/vocabulary/${newId}`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await setDoc(doc(db, 'users', userId, 'vocabulary', newId), newVocab);
+        setDbStatus('connected');
+        setFeedbackMessage('Palavra gravada no Firestore com sucesso!');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error saving vocabulary to Firestore:', err);
+        handleFirestoreError(err, OperationType.CREATE, `users/${userId}/vocabulary/${newId}`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const updateVocabulary = useCallback(
@@ -306,15 +327,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updatedAt = new Date().toISOString();
       setVocabulary((prev) => prev.map((v) => (v.id === id ? { ...v, ...updates, updatedAt } : v)));
 
-      if (user) {
-        try {
-          await updateDoc(doc(db, 'users', userId, 'vocabulary', id), { ...updates, updatedAt });
-        } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `users/${userId}/vocabulary/${id}`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await updateDoc(doc(db, 'users', userId, 'vocabulary', id), { ...updates, updatedAt });
+        setDbStatus('connected');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error updating vocabulary in Firestore:', err);
+        handleFirestoreError(err, OperationType.UPDATE, `users/${userId}/vocabulary/${id}`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const toggleVocabularyStatus = useCallback(
@@ -328,15 +354,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (id: string) => {
       setVocabulary((prev) => prev.filter((v) => v.id !== id));
 
-      if (user) {
-        try {
-          await deleteDoc(doc(db, 'users', userId, 'vocabulary', id));
-        } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `users/${userId}/vocabulary/${id}`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await deleteDoc(doc(db, 'users', userId, 'vocabulary', id));
+        setDbStatus('connected');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error deleting vocabulary in Firestore:', err);
+        handleFirestoreError(err, OperationType.DELETE, `users/${userId}/vocabulary/${id}`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const addGrammarItem = useCallback(
@@ -351,60 +382,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setGrammar((prev) => [newItem, ...prev]);
 
-      if (user) {
-        try {
-          await setDoc(doc(db, 'users', userId, 'grammar', newId), newItem);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `users/${userId}/grammar/${newId}`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await setDoc(doc(db, 'users', userId, 'grammar', newId), newItem);
+        setDbStatus('connected');
+        setFeedbackMessage('Regra gramatical gravada no Firestore!');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error saving grammar to Firestore:', err);
+        handleFirestoreError(err, OperationType.CREATE, `users/${userId}/grammar/${newId}`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const updateGrammarItem = useCallback(
     async (id: string, updates: Partial<GrammarItem>) => {
       setGrammar((prev) => prev.map((g) => (g.id === id ? { ...g, ...updates } : g)));
 
-      if (user) {
-        try {
-          await updateDoc(doc(db, 'users', userId, 'grammar', id), updates);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `users/${userId}/grammar/${id}`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await updateDoc(doc(db, 'users', userId, 'grammar', id), updates);
+        setDbStatus('connected');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error updating grammar in Firestore:', err);
+        handleFirestoreError(err, OperationType.UPDATE, `users/${userId}/grammar/${id}`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const deleteGrammarItem = useCallback(
     async (id: string) => {
       setGrammar((prev) => prev.filter((g) => g.id !== id));
 
-      if (user) {
-        try {
-          await deleteDoc(doc(db, 'users', userId, 'grammar', id));
-        } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `users/${userId}/grammar/${id}`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await deleteDoc(doc(db, 'users', userId, 'grammar', id));
+        setDbStatus('connected');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error deleting grammar in Firestore:', err);
+        handleFirestoreError(err, OperationType.DELETE, `users/${userId}/grammar/${id}`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const updateProfile = useCallback(
     async (updates: Partial<UserProfile>) => {
       setProfile((prev) => ({ ...prev, ...updates }));
 
-      if (user) {
-        try {
-          await setDoc(doc(db, 'users', userId, 'profile', 'info'), updates, { merge: true });
-        } catch (err) {
-          handleFirestoreError(err, OperationType.WRITE, `users/${userId}/profile/info`);
-        }
+      try {
+        setIsSyncing(true);
+        setDbStatus('saving');
+        await setDoc(doc(db, 'users', userId, 'profile', 'info'), updates, { merge: true });
+        setDbStatus('connected');
+      } catch (err) {
+        setDbStatus('error');
+        console.error('Error updating profile in Firestore:', err);
+        handleFirestoreError(err, OperationType.WRITE, `users/${userId}/profile/info`);
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [user, userId]
+    [userId]
   );
 
   const updateLevels = useCallback(
@@ -433,45 +485,82 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [updateProfile]
   );
 
-  // Clear all data (zeroing the app)
+  // Clear all data (zeroing both local state and Firestore database)
   const clearAllData = useCallback(async () => {
     setActivities([]);
     setVocabulary([]);
     setGrammar([]);
 
-    if (user) {
-      try {
-        const acts = await getDocs(collection(db, 'users', userId, 'activities'));
-        for (const d of acts.docs) await deleteDoc(d.ref);
+    try {
+      setIsSyncing(true);
+      setDbStatus('saving');
+      const acts = await getDocs(collection(db, 'users', userId, 'activities'));
+      for (const d of acts.docs) await deleteDoc(d.ref);
 
-        const vocabs = await getDocs(collection(db, 'users', userId, 'vocabulary'));
-        for (const d of vocabs.docs) await deleteDoc(d.ref);
+      const vocabs = await getDocs(collection(db, 'users', userId, 'vocabulary'));
+      for (const d of vocabs.docs) await deleteDoc(d.ref);
 
-        const grams = await getDocs(collection(db, 'users', userId, 'grammar'));
-        for (const d of grams.docs) await deleteDoc(d.ref);
-      } catch (e) {
-        console.error('Error clearing data in Firestore:', e);
-      }
+      const grams = await getDocs(collection(db, 'users', userId, 'grammar'));
+      for (const d of grams.docs) await deleteDoc(d.ref);
+
+      setDbStatus('connected');
+      setFeedbackMessage('Dados limpos com sucesso no Firestore!');
+    } catch (e) {
+      setDbStatus('error');
+      console.error('Error clearing data in Firestore:', e);
+    } finally {
+      setIsSyncing(false);
     }
-  }, [user, userId]);
+  }, [userId]);
 
   const loadSampleData = useCallback(async () => {
     setActivities(sampleStarterActivities);
     setVocabulary(sampleStarterVocabulary);
 
-    if (user) {
-      try {
-        for (const act of sampleStarterActivities) {
-          await setDoc(doc(db, 'users', userId, 'activities', act.id), { ...act, userId });
-        }
-        for (const voc of sampleStarterVocabulary) {
-          await setDoc(doc(db, 'users', userId, 'vocabulary', voc.id), { ...voc, userId });
-        }
-      } catch (e) {
-        console.error('Error loading sample data:', e);
+    try {
+      setIsSyncing(true);
+      setDbStatus('saving');
+      for (const act of sampleStarterActivities) {
+        await setDoc(doc(db, 'users', userId, 'activities', act.id), { ...act, userId });
       }
+      for (const voc of sampleStarterVocabulary) {
+        await setDoc(doc(db, 'users', userId, 'vocabulary', voc.id), { ...voc, userId });
+      }
+      setDbStatus('connected');
+      setFeedbackMessage('Exemplos gravados no Firestore!');
+    } catch (e) {
+      setDbStatus('error');
+      console.error('Error loading sample data:', e);
+    } finally {
+      setIsSyncing(false);
     }
-  }, [user, userId]);
+  }, [userId]);
+
+  const signInWithGoogle = useCallback(async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      const res = await signInWithPopup(auth, provider);
+      setUser(res.user);
+      setActiveUserId(res.user.uid);
+      localStorage.setItem('project_r_user_id', res.user.uid);
+      setFeedbackMessage(`Conectado com Google (${res.user.email})!`);
+    } catch (e) {
+      console.error('Google sign-in error:', e);
+      setFeedbackMessage('Não foi possível autenticar com Google.');
+    }
+  }, []);
+
+  const signOutUser = useCallback(async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      setActiveUserId('reinan');
+      localStorage.setItem('project_r_user_id', 'reinan');
+      setFeedbackMessage('Desconectado.');
+    } catch (e) {
+      console.error('Sign-out error:', e);
+    }
+  }, []);
 
   const speakWord = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) return;
@@ -553,6 +642,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         userId,
         isAuthReady,
         isSyncing,
+        dbStatus,
         activities,
         vocabulary,
         grammar,
@@ -590,6 +680,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateGoals,
         clearAllData,
         loadSampleData,
+        signInWithGoogle,
+        signOutUser,
         speakWord,
         totalMinutes,
         totalHoursFormatted,

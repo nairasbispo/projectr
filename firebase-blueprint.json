@@ -120,6 +120,45 @@
       },
       "required": ["userId", "word", "translation", "status"]
     },
+    "grammar": {
+      "title": "Grammar",
+      "description": "Grammar rules and sentence structures.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique grammar ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "User identifier"
+        },
+        "topic": {
+          "type": "string",
+          "description": "Topic name",
+          "maxLength": 150
+        },
+        "level": {
+          "type": "string",
+          "description": "CEFR level",
+          "maxLength": 10
+        },
+        "ruleExplanation": {
+          "type": "string",
+          "description": "Rule explanation",
+          "maxLength": 2000
+        },
+        "mastered": {
+          "type": "boolean",
+          "description": "Whether user mastered this grammar rule"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        }
+      },
+      "required": ["userId", "topic", "level", "ruleExplanation"]
+    },
     "userProfile": {
       "title": "UserProfile",
       "description": "Student CEFR journey progress, goals, and streak metrics.",
@@ -147,15 +186,6 @@
         "targetHours": {
           "type": "number",
           "description": "Target recommended hours for level progression"
-        },
-        "weeklyGoalHours": {
-          "type": "number",
-          "description": "Target hours per week"
-        },
-        "avatarUrl": {
-          "type": "string",
-          "description": "Profile picture URL",
-          "maxLength": 500
         }
       },
       "required": ["userId", "displayName", "currentLevel", "targetLevel"]
@@ -166,13 +196,19 @@
       "schema": {
         "$ref": "activity"
       },
-      "description": "Study session records scoped by authenticated user."
+      "description": "Study session records scoped by user."
     },
     "/users/{userId}/vocabulary/{vocabId}": {
       "schema": {
         "$ref": "vocabulary"
       },
-      "description": "Vocabulary notebook items scoped by authenticated user."
+      "description": "Vocabulary notebook items scoped by user."
+    },
+    "/users/{userId}/grammar/{grammarId}": {
+      "schema": {
+        "$ref": "grammar"
+      },
+      "description": "Grammar topics and rules scoped by user."
     },
     "/users/{userId}/profile/info": {
       "schema": {
